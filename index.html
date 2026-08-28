@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>web-immersive-light — Web 沉浸光感样板</title>
+<!-- ============================================================
+  web-immersive-light — 鸿蒙 pointLight 的 Web 等价物(零依赖样板仓)
+  产自 HotifyNEXT-Server /console 光感线(2026-08-27~28 十五版迭代),
+  完整坑史见源仓 webuipath.md W8-W9。
+
+  模型:指针=光源,光=连续物理场,不按元素切片。
+    k = clamp(1 - dist(光源→元素矩形)/2R)  ∈(0,1]
+    元素内 k=1,邻近渐亮,出圈灭;亮的部分=光圆∩元素。
+
+  渲染四通道(计算单一真相在 JS,配方单一真相在 :root):
+    ①光斑 blob——预渲染圆,translate3d 走合成器零重绘(跟手关键)
+    ②面光斑——.lit::before,径向∩元素
+    ③边缘接光带——.lit::after,border-mask 只露 1.5px 边(高对比特征,视觉主要载体)
+    ④input/select 内联径向——无伪元素平台边界的绕行
+
+  红线(实测教训,别省):
+    - 受光梯度必须在使用点属性直引 per-element 变量(var-in-var 冻结陷阱)
+    - blend 主题分层:dark=screen/light=normal(screen(白,x)=白数学不可见)
+    - 触屏拖拽补 touch 通道(浏览器手势没收 pointermove);pointerleave 加 touchActive 守卫
+    - scroll 监听空参包一层(Event 对象当 candidates 透传=全灭灯)
+    - reduced-motion 整体跳过;名单唯一在 JS 的 SEL 注册表,CSS 只认 .lit 单类
+============================================================ -->
+<style>
+/* ── 光感配方单一真相(:root 一处定义,四处消费)── */
+:root{
+  --light-r:80px;          /* 核心半径 */
+  --light-a:.13;           /* 面光斑强度(dark) */
+  --light-falloff:65%;     /* 面衰减 */
+  --light-edge-a:.20;      /* 边缘带强度 */
+  --light-edge-falloff:70%;
+  --light-edge-scale:1.4;  /* 边缘带径向放大 */
+  --light-blend:screen;    /* dark=screen 提亮 */
+  --tblr-primary-rgb:6,111,209;
+}
+[data-bs-theme=light],:root.light{
+  --light-a:.08;           /* 白面上蓝光降半档(灰糊线) */
+  --light-blend:normal;    /* screen(白,x)=白,数学不可见 */
+}
+
+/* ── 通道①:光斑 blob(合成器 transform,跟手)── */
+#light-layer{position:fixed;left:0;top:0;width:calc(var(--light-r)*2);height:calc(var(--light-r)*2);
+  z-index:2000;pointer-events:none;opacity:0;transition:opacity .25s;
+  mix-blend-mode:var(--light-blend);
+  background:radial-gradient(circle at center,rgba(var(--tblr-primary-rgb),var(--light-a)),transparent var(--light-falloff));
+  transform:translate3d(calc(var(--px,50vw) - var(--light-r)),calc(var(--py,30vh) - var(--light-r)),0);
+  will-change:transform}
+#light-layer.on{opacity:1}
+
+/* ── 受光面注册表形态:.lit 单类(CSS 零枚举,名单唯一在 JS SEL)──
+   密集堆叠族(表行/列表行)追加 .lit-row=分隔线形态(仅顶边带,相邻边界不叠粗线) */
+.lit{position:relative}
+.lit::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  mix-blend-mode:var(--light-blend);
+  background:radial-gradient(var(--light-r) at var(--mx,50%) var(--my,0%),rgba(var(--tblr-primary-rgb),calc(var(--light-a)*var(--light-k,0))),transparent var(--light-falloff))}
+.lit::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  padding:1.5px;
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  mix-blend-mode:var(--light-blend);
+  background:radial-gradient(calc(var(--light-r)*var(--light-edge-scale)) at var(--mx,50%) var(--my,0%),rgba(var(--tblr-primary-rgb),calc(var(--light-edge-a)*var(--light-k,0))),transparent var(--light-edge-falloff))}
+.lit::before,.lit::after{opacity:1}
+.lit-row::after{padding:1.5px 0 0 0}
+
+/* ── demo 页面(非样板本体)── */
+body{margin:0;min-height:200vh;font-family:system-ui,'PingFang SC','Microsoft YaHei',sans-serif;
+  background:linear-gradient(135deg,#1a2a6c,#2f6ea5 35%,#e38b5c 70%,#f2d4a0);color:#eee}
+body.light{background:linear-gradient(135deg,#f5f0e8,#e8dcc8 50%,#d4c4a8);color:#222}
+.ghost{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:min(22vw,220px);font-weight:900;color:rgba(255,255,255,.92);pointer-events:none;user-select:none;text-shadow:0 2px 18px rgba(0,0,0,.25)}
+body.light .ghost{color:rgba(0,0,0,.15)}
+.stage{position:relative;display:flex;flex-wrap:wrap;gap:40px;justify-content:center;padding:14vh 24px 30vh}
+.card{width:320px;border-radius:16px;padding:22px;background:rgba(30,35,50,.85);backdrop-filter:blur(4px)}
+body.light .card{background:rgba(255,255,255,.88);color:#222}
+.card h3{margin:0 0 8px;font-size:17px}
+.card p{margin:0 0 12px;font-size:13px;line-height:1.6;opacity:.75}
+.card input{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid rgba(128,128,128,.4);background:rgba(0,0,0,.2);color:inherit;font-size:13px}
+body.light .card input{background:#fff}
+.list{width:340px;border-radius:16px;overflow:hidden;background:rgba(30,35,50,.85);backdrop-filter:blur(4px)}
+body.light .list{background:rgba(255,255,255,.88);color:#222}
+.row{padding:14px 18px;border-bottom:1px solid rgba(128,128,128,.25);font-size:14px}
+.row:last-child{border-bottom:0}
+.hud{position:fixed;left:10px;bottom:10px;z-index:3000;font:11px/1.6 monospace;background:rgba(0,0,0,.75);color:#8fd;padding:8px 10px;border-radius:8px;white-space:pre;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="ghost">LIGHT</div>
+<div class="stage">
+  <div class="card lit">
+    <h3>卡片(孤立物件形)</h3>
+    <p>四边边缘接光带+面光斑。指针靠近时边缘段先亮(高对比特征),贴脸时整面光斑。</p>
+    <input placeholder="input 也受光(内联径向)">
+  </div>
+  <div class="list">
+    <div class="row lit lit-row">列表行一(lit-row:仅顶边带=分隔线形态)</div>
+    <div class="row lit lit-row">列表行二(相邻边界不叠粗线)</div>
+    <div class="row lit lit-row">列表行三(触屏拖拽光跟手指走)</div>
+    <div class="row lit lit-row">列表行四(松手即灭)</div>
+    <div class="row lit lit-row">列表行五</div>
+  </div>
+</div>
+<div id="light-layer"></div>
+<div class="hud" id="hud">fps—(空格切主题)</div>
+<script src="light.js"></script>
+<script>
+// demo 接线(非样板本体)
+document.addEventListener('keydown',function(e){
+  if(e.code==='Space'){e.preventDefault();document.body.classList.toggle('light');}
+});
+(function fps(){
+  var a=[],l=performance.now();
+  (function f(n){a.push(n-l);l=n;if(a.length>60)a.shift();
+    document.getElementById('hud').textContent='fps≈'+Math.round(60000/a.reduce(function(p,c){return p+c},0))+'(空格切主题)';requestAnimationFrame(f);})(performance.now());
+})();
+</script>
+</body>
+</html>
