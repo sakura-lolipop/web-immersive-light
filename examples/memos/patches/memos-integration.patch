@@ -1,0 +1,156 @@
+diff --git a/web/index.html b/web/index.html
+index 606be50..b51b703 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -18,6 +18,7 @@
+   </head>
+   <body class="text-base w-full min-h-svh">
+     <div id="root" class="relative w-full min-h-full"></div>
++    <div id="light-layer"></div>
+     <script type="module" src="/src/main.tsx"></script>
+     <!-- memos.metadata.body -->
+   </body>
+diff --git a/web/src/components/AppSidebar/SidebarRow.tsx b/web/src/components/AppSidebar/SidebarRow.tsx
+index f22644b..267a5b6 100644
+--- a/web/src/components/AppSidebar/SidebarRow.tsx
++++ b/web/src/components/AppSidebar/SidebarRow.tsx
+@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
+  * rows that carry a trailing control put the box on a wrapper and focus on the button
+  * inside it.
+  */
+-export const SIDEBAR_ROW_BOX_CLASSES = "group flex h-[30px] w-full min-w-0 items-center gap-2 rounded-md px-2 text-ui transition-colors";
++export const SIDEBAR_ROW_BOX_CLASSES = "sidebar-row group flex h-[30px] w-full min-w-0 items-center gap-2 rounded-md px-2 text-ui transition-colors";
+ 
+ /** Goes on whichever element in a row actually takes focus. */
+ export const SIDEBAR_ROW_FOCUS_CLASSES = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+diff --git a/web/src/components/MemoView/constants.ts b/web/src/components/MemoView/constants.ts
+index b16cce5..0f5b76e 100644
+--- a/web/src/components/MemoView/constants.ts
++++ b/web/src/components/MemoView/constants.ts
+@@ -1,4 +1,4 @@
+ export const MEMO_CARD_BASE_CLASSES =
+-  "relative group flex flex-col justify-start items-start bg-card w-full px-4 py-3 mb-2 gap-2 text-card-foreground rounded-lg border border-border transition-colors";
++  "memo-card relative group flex flex-col justify-start items-start bg-card w-full px-4 py-3 mb-2 gap-2 text-card-foreground rounded-lg border border-border transition-colors";
+ 
+ export const RELATIVE_TIME_THRESHOLD_MS = 1000 * 60 * 60 * 24;
+diff --git a/web/src/components/ui/dialog.tsx b/web/src/components/ui/dialog.tsx
+index 5e2dd50..741adb9 100644
+--- a/web/src/components/ui/dialog.tsx
++++ b/web/src/components/ui/dialog.tsx
+@@ -57,6 +57,7 @@ const DialogContent = React.forwardRef<
+     <DialogOverlay />
+     <DialogPrimitive.Popup
+       ref={ref}
++      data-slot="dialog-content"
+       className={cn(dialogContentVariants({ size }), className)}
+       initialFocus={false}
+       finalFocus={false}
+diff --git a/web/src/index.css b/web/src/index.css
+index 532aba0..44c648d 100644
+--- a/web/src/index.css
++++ b/web/src/index.css
+@@ -31,3 +31,92 @@
+     @apply bg-background text-foreground;
+   }
+ }
++
++/* ============================================================
++  web-immersive-light 接入段(样板 web-immersive-light/index.html <style> 三段)
++  模型:指针=光源,k = clamp(1 - dist(光源→元素矩形)/2R) ∈(0,1]。
++  主题分层:memos 用 [data-theme] 切主题(default/default-dark/paper),
++  dark=screen 提亮 / 亮色=normal(screen(白,x)=白数学不可见)。
++  红线:受光梯度必须在使用点属性直引 per-element 变量(var-in-var 冻结陷阱)。
++============================================================ */
++
++/* ── 光感配方单一真相(:root 一处定义,四处消费)── */
++:root {
++  --light-r: 80px;         /* 核心半径 */
++  --light-a: 0.08;         /* 面光斑强度(亮色主题半档,防灰糊线) */
++  --light-falloff: 65%;    /* 面衰减 */
++  --light-edge-a: 0.2;     /* 边缘带强度 */
++  --light-edge-falloff: 70%;
++  --light-edge-scale: 1.4; /* 边缘带径向放大 */
++  --light-blend: normal;   /* 亮色主题(default/paper) */
++  --primary-rgb: 48, 88, 128; /* memos --primary: oklch(0.45 0.08 250) */
++}
++[data-theme="default-dark"] {
++  --light-a: 0.13;
++  --light-blend: screen; /* dark=screen 提亮 */
++  --primary-rgb: 91, 151, 211; /* memos dark --primary: oklch(0.66 0.11 250) */
++}
++
++/* ── 通道①:光斑 blob(合成器 transform,跟手)── */
++#light-layer {
++  position: fixed;
++  left: 0;
++  top: 0;
++  width: calc(var(--light-r) * 2);
++  height: calc(var(--light-r) * 2);
++  z-index: 2000;
++  pointer-events: none;
++  opacity: 0;
++  transition: opacity 0.25s;
++  mix-blend-mode: var(--light-blend);
++  background: radial-gradient(circle at center, rgba(var(--primary-rgb), var(--light-a)), transparent var(--light-falloff));
++  transform: translate3d(calc(var(--px, 50vw) - var(--light-r)), calc(var(--py, 30vh) - var(--light-r)), 0);
++  will-change: transform;
++}
++#light-layer.on {
++  opacity: 1;
++}
++
++/* ── 受光面:通道②面光斑(::before)+ 通道③边缘接光带(::after)──
++   .lit 位置基准必须挂在 @layer base:Tailwind v4 是真 cascade layers,
++   无层裸声明会压过 utilities 层,把对话框 .fixed 打崩成 position:relative。
++   侧边栏行无 position utility → base 层的 relative 生效;已定位元素不动。 */
++@layer base {
++  .lit {
++    position: relative;
++  }
++}
++.lit::before {
++  content: "";
++  position: absolute;
++  inset: 0;
++  border-radius: inherit;
++  pointer-events: none;
++  mix-blend-mode: var(--light-blend);
++  background: radial-gradient(
++    var(--light-r) at var(--mx, 50%) var(--my, 0%),
++    rgba(var(--primary-rgb), calc(var(--light-a) * var(--light-k, 0))),
++    transparent var(--light-falloff)
++  );
++}
++.lit::after {
++  content: "";
++  position: absolute;
++  inset: 0;
++  border-radius: inherit;
++  pointer-events: none;
++  padding: 1.5px;
++  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
++  -webkit-mask-composite: xor;
++  mask-composite: exclude;
++  mix-blend-mode: var(--light-blend);
++  background: radial-gradient(
++    calc(var(--light-r) * var(--light-edge-scale)) at var(--mx, 50%) var(--my, 0%),
++    rgba(var(--primary-rgb), calc(var(--light-edge-a) * var(--light-k, 0))),
++    transparent var(--light-edge-falloff)
++  );
++}
++/* 密集堆叠族(侧边栏行/菜单行)=分隔线形态:仅顶边带,相邻边界不叠粗线 */
++.lit-row::after {
++  padding: 1.5px 0 0 0;
++}
+diff --git a/web/src/main.tsx b/web/src/main.tsx
+index 0b6fc34..27318ca 100644
+--- a/web/src/main.tsx
++++ b/web/src/main.tsx
+@@ -7,6 +7,7 @@ import { Toaster } from "react-hot-toast";
+ import { RouterProvider } from "react-router-dom";
+ import "./i18n";
+ import "./index.css";
++import "./light";
+ import { ErrorBoundary } from "@/components/ErrorBoundary";
+ import { TooltipProvider } from "@/components/ui/tooltip";
+ import { refreshAccessToken } from "@/connect";
