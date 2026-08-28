@@ -53,6 +53,46 @@ Tune appearance via `:root` `--light-*` variables (radius / strength / falloff /
 
 Open `index.html` directly. Space toggles theme. Drag/hover to see lighting. Bottom-left shows fps.
 
+## Framework integration notes
+
+Validated against [memos](https://github.com/usememos/memos) (React 18 + TypeScript + Tailwind CSS v4 + Vite + Go backend) — full-stack live run, 13/13 assertions + pixel-diff across all four channels. Integration cost: 2 SEL lines + paste CSS + 3 anchor constants (+94 lines total).
+
+### Tailwind CSS v4: `.lit` position anchor must go in `@layer base`
+
+Tailwind v4 uses **real CSS cascade layers** (`@layer theme, base, components, utilities`). If you paste `.lit{position:relative}` as unlayered CSS, it wins over the `utilities` layer — breaking `position:fixed` on dialogs and `position:sticky` on headers. Fix:
+
+```css
+@layer base {
+  .lit { position: relative }
+}
+```
+
+The `::before`/`::after` gradient rules can stay unlayered (they don't set `position` on the host element).
+
+### React: avoid conditional `className` on lit surfaces
+
+`light.js` adds `.lit` via `classList.add()` — an external DOM mutation that React doesn't know about. If a component re-renders with a conditional `className` (e.g. `showMore ? 'mb-0 rounded-b-none' : ''`), React's diff wipes the `.lit` class; it gets re-added on the next `pointermove`. Acceptable for demo, flickery in production.
+
+Solutions:
+- **Best**: use stable `data-*` attribute anchors (e.g. `data-slot="card"`) instead of conditional classes — update the `SEL` registry to match `[data-slot="card"]`
+- Acceptable: put `lit` on a wrapper element that never gets conditional classes
+- Avoid: conditional classes directly on lit surfaces
+
+### No semantic classes (Tailwind-only apps)
+
+If your app has no stable class names, add anchor constants to your component templates:
+
+```tsx
+// e.g. in a card component's className
+const MEMO_CARD_CLASSES = 'lit lit-row relative flex flex-col ...'
+```
+
+Or prefer `data-slot` / `data-testid` attributes — they survive refactors better than layout classes.
+
+### Theme selector
+
+The sample uses `[data-bs-theme=light]` (Tabler convention). Your app likely uses a different mechanism — adapt the light-theme override selector (`--light-a` + `--light-blend`) to match (e.g. `[data-theme="default-dark"]`, `.dark`, `prefers-color-scheme`).
+
 ## License
 
 GPL-3.0 — see [LICENSE](LICENSE).
