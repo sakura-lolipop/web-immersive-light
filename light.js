@@ -149,7 +149,10 @@ function segLine(x1, y1, x2, y2, v, mx, my, k){
 function drawEdgeBand(v, o, mx, my){ // o={el,b,k,row}
   var b = o.b, k = o.k, row = o.row;
   var rad = radiusOf(o.el);
-  var x = b.left + 1, y = row ? b.top - 1 : b.top + 1, w = b.width - 2, h = b.height - 2; // 内缩 1(不缩=相邻卡拼 gutter 亮缝);row 分隔线跨界居中
+  // 内缩 1(不缩=相邻卡拼 gutter 亮缝);row 分隔线以交界居中(y=top,占 -1~+1)——off-by-one 勘误
+  // (2026-09-01):曾 y=top-1=占 -2~0 悬上一行;「居中感」另含底色错觉(上半叠浅底/下半叠暗分隔线,
+  // 同光增量暗底不可见)——几何居中后观感仍偏上属预期,1px 在感知阈内。
+  var x = b.left + 1, y = row ? b.top : b.top + 1, w = b.width - 2, h = b.height - 2;
   if (w <= 0 || h <= 0) return;
   var rr = Math.min(rad, w / 2, h / 2);
   ctx.lineWidth = 2; ctx.lineCap = 'butt';
