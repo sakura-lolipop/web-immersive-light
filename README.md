@@ -1,14 +1,14 @@
 # web-immersive-light
 
-**Immersive Light for the Web** — a zero-dependency, two-file implementation of pointer-as-light-source proximity lighting, inspired by HarmonyOS [Immersive Light Sense](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-immersive-light-sense) (沉浸光感) and [Point Light](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ui-design-visual-effect-point-light) (点光源).
+**Immersive Light for the Web** — a zero-dependency, two-file implementation of pointer-as-light-source proximity lighting with **light-domain occlusion**, inspired by HarmonyOS [Immersive Light Sense](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/arkts-immersive-light-sense) (沉浸光感) and [Point Light](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ui-design-visual-effect-point-light) (点光源).
 
 > HarmonyOS has `systemMaterial` + `pointLight` + `lightEffect` natively. The web has nothing — this fills the gap.
 
-Extracted from [HotifyNEXT-Server](https://github.com/sakura-lolipop/HotifyNEXT-Server) /console (15-iteration R&D, 2026-08). Full pitfall ledger: source repo `webuipath.md` W8-W9.
+Extracted from [HotifyNEXT-Server](https://github.com/sakura-lolipop/HotifyNEXT-Server) /console (15-iteration R&D 2026-08, canvas rewrite + light-domain CP 2026-09-01). Full pitfall ledger: source repo `webuipath.md` W8–W16.
 
-## What it does
+## v2 (2026-09-01): canvas renderer + light domain
 
-The pointer (or finger on touch) acts as a **light source** in a continuous physical field — light is not sliced by element boundaries:
+v1 rendered with CSS (blob div + `::before`/`::after` pseudo-elements + inline gradients) — four rendering owners. **v2 is a single full-screen `<canvas>` drawing loop** (the source repo's production architecture), and adds **light-domain occlusion**:
 
 ```
 k = clamp(1 − dist(light, element-rect-nearest-point) / 2R)
@@ -17,82 +17,63 @@ k = clamp(1 − dist(light, element-rect-nearest-point) / 2R)
 
 | Channel | Mechanism | Visual |
 |---|---|---|
-| ① Wash blob | Pre-rendered radial, `translate3d` compositor | Continuous background light, zero repaint |
-| ② Surface spot | `.lit::before` radial ∩ element | Light falls on the face |
-| ③ Edge band | `.lit::after` border-mask reveals only 1.5px edge | Near-light edges catch light (the perceptually dominant channel) |
-| ④ Input inline | `background-image` radial | Bypasses the no-pseudo-element platform limit on `<input>/<select>` |
+| ① Wash blob | Pre-rendered 128px sprite, `drawImage` GPU path | Continuous light around the pointer |
+| ② Surface spot | Per-element clip (border-radius aware) + radial | Light falls on the face |
+| ③ Edge band | Perimeter segmented (straight + corner arcs), per-segment α with micro-gradients | Near-light edges catch light (the perceptually dominant channel) |
+| ④ Input ring+spot | Same band primitives inside inputs; focus defers to the native ring | Inputs read as lit surfaces |
 
 Plus:
-- **Row mode** (`.lit-row`): top-edge-only band for table/list rows — adjacent boundaries don't double up
-- **Touch drag**: `touchstart/touchmove/touchend` channel (browser gesture capture kills `pointermove`; passive listeners don't block scroll)
+
+- **Light domain (the headline rule)**: a modal is a *well* — while open, light reaches only the modal; the page below stays dark. And the page canvas sits at z1049, **below any overlay you add** (panels, toasts, future containers) — they physically occlude light with zero registration. Modal open → canvas z2000 floats light on the modal surface.
+- **Row mode**: top-edge-only band for table/list rows — adjacent boundaries don't double up
+- **Touch**: dedicated touch channel (gesture capture kills `pointermove`), finger-stack caching at 40px threshold
+- **Scroll-follow**: compositor-phase repaint loop while scrolling (event-driven paint lags one frame on mobile = trailing ghost)
 - **Theme blend**: dark=`screen` / light=`normal` (screen on white is mathematically invisible)
 - **`prefers-reduced-motion`**: skips entirely
-- **Built-in fps HUD** (demo page)
+- **Built-in fps HUD** (`?light=bench`) and self-proof mode (`?light=boost`)
 
 ## Quick start
 
-1. Copy the `<style>` blocks from `index.html`: `:root` recipe vars, `#light-layer`, `.lit/.lit-row`
-2. Add `<div id="light-layer"></div>` to your page
-3. Tag lit elements: `class="lit"` (rows also get `lit-row`)
-4. `<script src="light.js">`; edit the `SEL` registry line at the top to match your page
+1. Copy the `<style>` blocks from `index.html`: `:root` recipe vars + `#light-canvas`
+2. Add `<canvas id="light-canvas"></canvas>` (first child of `<body>`)
+3. Register your lit surfaces in the `SEL` registry at the top of `light.js` (`.card`, rows → also `SEL_ROW`, inputs → `INPUTS`)
+4. `<script src="light.js">`
+5. **When you open/close a modal (any `.modal.in`), call `window.__lightRepaint()`** — domain switches repaint and invalidate the touch stack
 
-Tune appearance via `:root` `--light-*` variables (radius / strength / falloff / blend) — one definition, four channels consume.
+Tune appearance via `:root` `--light-*` variables — one definition, four channels consume.
 
-## The 6 hard-won rules (skip one = rework cycle)
+## The 7 hard-won rules (skip one = rework cycle)
 
 | Pitfall | Symptom | Rule |
 |---|---|---|
-| var-in-var freeze | Gradient in `:root` custom property → per-element vars stuck at defaults, light dead | Inline `var(--mx)` at the usage-site property |
-| screen on light surface | Light theme glow invisible (screen(white,x)=white) | Theme-tiered blend variable |
-| Gesture capture | Touch drag has no light (pointermove pointercancel'd) | Add touch channel; guard pointerleave with touchActive |
-| Event passthrough | `addEventListener('scroll', queue)` → Event as candidates → all lights off | Wrap in zero-arg closure |
-| Full-viewport repaint | Drag not smooth (per-frame main-thread gradient paint) | Pre-rendered blob + translate3d + will-change |
-| Dual registry | CSS enumeration + JS list drift apart, surfaces missed | CSS only knows `.lit` class; registry lives solely in JS `SEL` |
+| var-in-var freeze | Gradients in `:root` custom properties → per-element vars stuck at defaults | Read raw values in JS, one recipe in `:root` |
+| screen on light surface | Light-theme glow invisible | Theme-tiered `--light-a-base`/`--light-blend` |
+| Gesture capture | Touch drag has no light | Touch channel; guard `pointerleave` with `touchActive` |
+| Full-viewport repaint | Drag not smooth | Sprite + `drawImage` + segmented-band fast path + scroll-follow loop |
+| Dual registry | CSS enumeration and JS list drift apart | Registry lives solely in JS `SEL` |
+| Event passthrough | `addEventListener('scroll', queue)` → Event as candidates → all lights off | Zero-arg closure + `capture:true` (inner scroll containers don't bubble) |
+| **Light bleeding through overlays** | **Modal open → page surfaces under/next to it still light up (flat distance field has no z concept); canvas above everything → light floats over the modal** | **Light domain: modal = well (only well + descendants lit); canvas z follows domain (1049 page / 2000 modal) — any overlay above 1049 occludes for free** |
+
+## Multi-modal stacks
+
+The sample's domain truth is a DOM query (`.modal.in`) — fine for single-modal layers. If you stack modals (confirm over dialog) and need *top-of-stack* authority with open/close ordering, see the source repo's `modalStack`-backed `scopeOf()` (`internal/webui/js/15-light.js`).
 
 ## Demo
 
-Open `index.html` directly. Space toggles theme. Drag/hover to see lighting. Bottom-left shows fps.
+Open `index.html` directly. Space toggles theme. **"Open modal" demonstrates the light domain** — move the pointer inside the modal and watch the page stay dark. Bottom-left shows fps with `?light=bench`.
 
 ## Framework integration notes
 
-Validated against [memos](https://github.com/usememos/memos) (React 18 + TypeScript + Tailwind CSS v4 + Vite + Go backend) — full-stack live run, 13/13 assertions + pixel-diff across all four channels. Integration cost: 2 SEL lines + paste CSS + 3 anchor constants (+94 lines total).
+> The v1 memos integration (`examples/memos`) targeted the **v1 CSS architecture** — treat it as a reference for anchor strategy (stable `data-*` attributes, no conditional `className` on lit surfaces); the CSS/pseudo-element specifics are obsolete under v2. A v2 refresh is pending real integrator demand.
 
-### Tailwind CSS v4: `.lit` position anchor must go in `@layer base`
+### Theming without Tabler
 
-Tailwind v4 uses **real CSS cascade layers** (`@layer theme, base, components, utilities`). If you paste `.lit{position:relative}` as unlayered CSS, it wins over the `utilities` layer — breaking `position:fixed` on dialogs and `position:sticky` on headers. Fix:
+The sample ships its own `html[data-theme=light]` override block. Adapt the selector to your theme mechanism (`data-bs-theme`, `.dark`, `prefers-color-scheme`, …) — override `--light-a-base` + `--light-blend`.
 
-```css
-@layer base {
-  .lit { position: relative }
-}
-```
+### Canvas layering in your app
 
-The `::before`/`::after` gradient rules can stay unlayered (they don't set `position` on the host element).
-
-### React: avoid conditional `className` on lit surfaces
-
-`light.js` adds `.lit` via `classList.add()` — an external DOM mutation that React doesn't know about. If a component re-renders with a conditional `className` (e.g. `showMore ? 'mb-0 rounded-b-none' : ''`), React's diff wipes the `.lit` class; it gets re-added on the next `pointermove`. Acceptable for demo, flickery in production.
-
-Solutions:
-- **Best**: use stable `data-*` attribute anchors (e.g. `data-slot="card"`) instead of conditional classes — update the `SEL` registry to match `[data-slot="card"]`
-- Acceptable: put `lit` on a wrapper element that never gets conditional classes
-- Avoid: conditional classes directly on lit surfaces
-
-### No semantic classes (Tailwind-only apps)
-
-If your app has no stable class names, add anchor constants to your component templates:
-
-```tsx
-// e.g. in a card component's className
-const MEMO_CARD_CLASSES = 'lit lit-row relative flex flex-col ...'
-```
-
-Or prefer `data-slot` / `data-testid` attributes — they survive refactors better than layout classes.
-
-### Theme selector
-
-The sample uses `[data-bs-theme=light]` (Tabler convention). Your app likely uses a different mechanism — adapt the light-theme override selector (`--light-a` + `--light-blend`) to match (e.g. `[data-theme="default-dark"]`, `.dark`, `prefers-color-scheme`).
+`#light-canvas` must sit above normal content and below your overlays. The built-in z policy: page domain 1049 / modal domain 2000. If your app uses a different z-scale, adjust `applyScope()` and keep overlays above the page value — that's the whole contract.
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0 — see `LICENSE`.

@@ -1,121 +1,150 @@
 <!doctype html>
-<html lang="zh-CN">
+<!-- ============================================================
+  web-immersive-light v2 demo — Canvas 架构(2026-09-01 对齐源仓终态:
+  2026-08-28 Canvas 四通道归一 + 2026-09-01 光域唯一性 CP 完整回灌;
+  v1 的 CSS 伪元素通道已退役,完整坑史见源仓 webuipath.md W8-W16)。
+
+  模型(不变):指针=光源,光=连续物理场。k = clamp(1 - d/2R),元素内 k=1。
+  渲染:全屏单 #light-canvas 四通道(blob sprite/面斑 clip/边缘带段化/input 环+斑)。
+  光域唯一性:模态弹卡=井——井内只照井内;页面域 canvas z1049 被一切更高浮层天然挡光。
+  demo:Space 切深浅主题;「Open modal」演示光域;?light=boost 自证 / ?light=bench 帧率 HUD。
+============================================================ -->
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>web-immersive-light — Web 沉浸光感样板</title>
-<!-- ============================================================
-  web-immersive-light — 鸿蒙 pointLight 的 Web 等价物(零依赖样板仓)
-  产自 HotifyNEXT-Server /console 光感线(2026-08-27~28 十五版迭代),
-  完整坑史见源仓 webuipath.md W8-W9。
-
-  模型:指针=光源,光=连续物理场,不按元素切片。
-    k = clamp(1 - dist(光源→元素矩形)/2R)  ∈(0,1]
-    元素内 k=1,邻近渐亮,出圈灭;亮的部分=光圆∩元素。
-
-  渲染四通道(计算单一真相在 JS,配方单一真相在 :root):
-    ①光斑 blob——预渲染圆,translate3d 走合成器零重绘(跟手关键)
-    ②面光斑——.lit::before,径向∩元素
-    ③边缘接光带——.lit::after,border-mask 只露 1.5px 边(高对比特征,视觉主要载体)
-    ④input/select 内联径向——无伪元素平台边界的绕行
-
-  红线(实测教训,别省):
-    - 受光梯度必须在使用点属性直引 per-element 变量(var-in-var 冻结陷阱)
-    - blend 主题分层:dark=screen/light=normal(screen(白,x)=白数学不可见)
-    - 触屏拖拽补 touch 通道(浏览器手势没收 pointermove);pointerleave 加 touchActive 守卫
-    - scroll 监听空参包一层(Event 对象当 candidates 透传=全灭灯)
-    - reduced-motion 整体跳过;名单唯一在 JS 的 SEL 注册表,CSS 只认 .lit 单类
-============================================================ -->
+<title>web-immersive-light — immersive proximity lighting (canvas)</title>
 <style>
-/* ── 光感配方单一真相(:root 一处定义,四处消费)── */
+/* ── 光感配方族(:root 单一定义,light.js 只读)── */
 :root{
-  --light-r:80px;          /* 核心半径 */
-  --light-a:.13;           /* 面光斑强度(dark) */
-  --light-falloff:65%;     /* 面衰减 */
-  --light-edge-a:.20;      /* 边缘带强度 */
-  --light-edge-falloff:70%;
-  --light-edge-scale:1.4;  /* 边缘带径向放大 */
-  --light-blend:screen;    /* dark=screen 提亮 */
-  --tblr-primary-rgb:6,111,209;
+  --light-r:80px;          /* 光晕半径(px) */
+  --light-falloff:65%;     /* 径向衰减尽位 */
+  --light-a-base:.13;      /* 光球/面斑基准 α */
+  --light-gain:1;          /* 总闸(0=关灯合法档) */
+  --light-edge-base:.20;   /* 边缘带独立基准(JS 读裸数自乘 gain) */
+  --light-dsurface:.03;    /* on-surface 卡面补偿 Δ(指针在卡面时光球加亮) */
+  --light-rgb:6,111,209;   /* 受光色(严格 "r,g,b" 串,非法值 JS 侧回落) */
+  --light-blend:screen;    /* 暗色 screen 提亮/浅色 normal(screen on white 数学不可见) */
 }
-[data-bs-theme=light],:root.light{
-  --light-a:.08;           /* 白面上蓝光降半档(灰糊线) */
-  --light-blend:normal;    /* screen(白,x)=白,数学不可见 */
-}
+html[data-theme=light]{ --light-a-base:.08; --light-blend:normal; } /* 浅色档 */
 
-/* ── 通道①:光斑 blob(合成器 transform,跟手)── */
-#light-layer{position:fixed;left:0;top:0;width:calc(var(--light-r)*2);height:calc(var(--light-r)*2);
-  z-index:2000;pointer-events:none;opacity:0;transition:opacity .25s;
-  mix-blend-mode:var(--light-blend);
-  background:radial-gradient(circle at center,rgba(var(--tblr-primary-rgb),var(--light-a)),transparent var(--light-falloff));
-  transform:translate3d(calc(var(--px,50vw) - var(--light-r)),calc(var(--py,30vh) - var(--light-r)),0);
-  will-change:transform}
-#light-layer.on{opacity:1}
+/* ── 光层:全屏单 canvas,四通道唯一渲染所有权。z 随域切(light.js applyScope 唯一 writer):
+     页面域 1049=被一切更高浮层天然挡光;弹卡域 2000=光浮弹卡面上 ── */
+#light-canvas{position:fixed;left:0;top:0;z-index:1049;pointer-events:none;mix-blend-mode:var(--light-blend)}
 
-/* ── 受光面注册表形态:.lit 单类(CSS 零枚举,名单唯一在 JS SEL)──
-   密集堆叠族(表行/列表行)追加 .lit-row=分隔线形态(仅顶边带,相邻边界不叠粗线) */
-.lit{position:relative}
-.lit::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  mix-blend-mode:var(--light-blend);
-  background:radial-gradient(var(--light-r) at var(--mx,50%) var(--my,0%),rgba(var(--tblr-primary-rgb),calc(var(--light-a)*var(--light-k,0))),transparent var(--light-falloff))}
-.lit::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
-  padding:1.5px;
-  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
-  mix-blend-mode:var(--light-blend);
-  background:radial-gradient(calc(var(--light-r)*var(--light-edge-scale)) at var(--mx,50%) var(--my,0%),rgba(var(--tblr-primary-rgb),calc(var(--light-edge-a)*var(--light-k,0))),transparent var(--light-edge-falloff))}
-.lit::before,.lit::after{opacity:1}
-.lit-row::after{padding:1.5px 0 0 0}
+/* ── demo 页样式(接入页换成自己的;受光面只需挂进 light.js 的 SEL 注册表)── */
+:root{color-scheme:dark}
+html[data-theme=light]{color-scheme:light}
+body{margin:0;font:15px/1.6 system-ui,sans-serif;background:#111418;color:#e6e8eb}
+.wrap{max-width:960px;margin:0 auto;padding:2.5rem 1.25rem 5rem}
+h1{font-size:1.6rem;margin:0 0 .25rem}
+h1 small{font-weight:400;color:#8b949e}
+p.lead{color:#8b949e;margin:0 0 2rem}
+kbd{background:#21262d;border-radius:4px;padding:0 .4em;font-size:.85em}
+.toolbar{display:flex;gap:.5rem;margin-bottom:2rem;flex-wrap:wrap}
+.btn{border:1px solid #30363d;background:#161b22;color:#e6e8eb;border-radius:8px;padding:.45rem .9rem;
+  cursor:pointer;font:inherit;position:relative;z-index:1}
+html[data-theme=light] .btn{border-color:#d0d7de;background:#fff;color:#24292f}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem}
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1rem;position:relative;z-index:1}
+html[data-theme=light] .card{background:#fff;border-color:#d0d7de}
+.card h3{margin:0 0 .4rem;font-size:1rem}
+.card p{margin:0;color:#8b949e;font-size:.85rem}
+.list-group{margin-top:2rem;border-radius:10px;overflow:hidden;border:1px solid #30363d}
+html[data-theme=light] .list-group{border-color:#d0d7de}
+.list-group-item{display:flex;justify-content:space-between;padding:.7rem 1rem;background:#161b22;
+  border-top:1px solid #21262d;position:relative;z-index:1}
+html[data-theme=light] .list-group-item{background:#fff;border-top-color:#eaeef2}
+.list-group-item:first-child{border-top:0}
+.list-group-item .t{font-weight:600}
+.list-group-item .m{color:#8b949e;font-size:.85rem}
+form{margin-top:2rem;display:grid;gap:.75rem;max-width:420px}
+input,select{background:#161b22;border:1px solid #30363d;color:#e6e8eb;border-radius:8px;
+  padding:.55rem .75rem;font:inherit}
+html[data-theme=light] input,html[data-theme=light] select{background:#fff;border-color:#d0d7de;color:#24292f}
+footer{margin-top:3rem;color:#8b949e;font-size:.8rem}
+footer a{color:inherit}
 
-/* ── demo 页面(非样板本体)── */
-body{margin:0;min-height:200vh;font-family:system-ui,'PingFang SC','Microsoft YaHei',sans-serif;
-  background:linear-gradient(135deg,#1a2a6c,#2f6ea5 35%,#e38b5c 70%,#f2d4a0);color:#eee}
-body.light{background:linear-gradient(135deg,#f5f0e8,#e8dcc8 50%,#d4c4a8);color:#222}
-.ghost{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-  font-size:min(22vw,220px);font-weight:900;color:rgba(255,255,255,.92);pointer-events:none;user-select:none;text-shadow:0 2px 18px rgba(0,0,0,.25)}
-body.light .ghost{color:rgba(0,0,0,.15)}
-.stage{position:relative;display:flex;flex-wrap:wrap;gap:40px;justify-content:center;padding:14vh 24px 30vh}
-.card{width:320px;border-radius:16px;padding:22px;background:rgba(30,35,50,.85);backdrop-filter:blur(4px)}
-body.light .card{background:rgba(255,255,255,.88);color:#222}
-.card h3{margin:0 0 8px;font-size:17px}
-.card p{margin:0 0 12px;font-size:13px;line-height:1.6;opacity:.75}
-.card input{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid rgba(128,128,128,.4);background:rgba(0,0,0,.2);color:inherit;font-size:13px}
-body.light .card input{background:#fff}
-.list{width:340px;border-radius:16px;overflow:hidden;background:rgba(30,35,50,.85);backdrop-filter:blur(4px)}
-body.light .list{background:rgba(255,255,255,.88);color:#222}
-.row{padding:14px 18px;border-bottom:1px solid rgba(128,128,128,.25);font-size:14px}
-.row:last-child{border-bottom:0}
-.hud{position:fixed;left:10px;bottom:10px;z-index:3000;font:11px/1.6 monospace;background:rgba(0,0,0,.75);color:#8fd;padding:8px 10px;border-radius:8px;white-space:pre;pointer-events:none}
+/* ── 光域 demo 弹卡(z 阶梯:canvas 页面域 1049 < backdrop 1050 < modal 1055 < 弹卡域 2000)── */
+.modal{position:fixed;inset:0;display:none;z-index:1055;padding:1rem}
+.modal.in{display:block}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1050;opacity:0;transition:opacity .18s}
+.modal-backdrop.show{opacity:1}
+.modal-dialog{max-width:440px;margin:12vh auto 0;position:relative;z-index:1055} /* 压过 backdrop(1050,父 .modal 内兄弟)——无 z=auto 被全屏 backdrop 盖住点不了(探针实证) */
+.modal-content{background:#1c2128;border:1px solid #30363d;border-radius:12px;padding:1.25rem;position:relative}
+html[data-theme=light] .modal-content{background:#fff;border-color:#d0d7de}
+.modal-content h3{margin:0 0 .5rem}
+.modal-content p{color:#8b949e;font-size:.9rem;margin:0 0 1rem}
 </style>
 </head>
 <body>
-<div class="ghost">LIGHT</div>
-<div class="stage">
-  <div class="card lit">
-    <h3>卡片(孤立物件形)</h3>
-    <p>四边边缘接光带+面光斑。指针靠近时边缘段先亮(高对比特征),贴脸时整面光斑。</p>
-    <input placeholder="input 也受光(内联径向)">
+<canvas id="light-canvas"></canvas>
+
+<div class="wrap">
+  <h1>web-immersive-light <small>v2 · canvas</small></h1>
+  <p class="lead">Pointer-as-light-source proximity lighting — single-canvas renderer with light-domain occlusion. Hover or drag to light. <kbd>Space</kbd> toggles theme.</p>
+
+  <div class="toolbar">
+    <button class="btn" id="btn-modal">Open modal (light-domain demo)</button>
+    <button class="btn" id="btn-theme">Theme</button>
   </div>
-  <div class="list">
-    <div class="row lit lit-row">列表行一(lit-row:仅顶边带=分隔线形态)</div>
-    <div class="row lit lit-row">列表行二(相邻边界不叠粗线)</div>
-    <div class="row lit lit-row">列表行三(触屏拖拽光跟手指走)</div>
-    <div class="row lit lit-row">列表行四(松手即灭)</div>
-    <div class="row lit lit-row">列表行五</div>
+
+  <div class="grid">
+    <div class="card"><h3>Surfaces catch light</h3><p>Face spot and edge band follow the pointer across each card.</p></div>
+    <div class="card"><h3>Edge band</h3><p>The perceptually dominant channel — edges reveal only near the light.</p></div>
+    <div class="card"><h3>On-surface boost</h3><p>Pointer inside a card adds the Δ compensation to the blob.</p></div>
+    <div class="card"><h3>Continuous field</h3><p>Light is not sliced by element boundaries: k = 1 − d/2R over the whole page.</p></div>
   </div>
+
+  <div class="list-group">
+    <div class="list-group-item"><span class="t">Row mode</span><span class="m">top-edge-only band</span></div>
+    <div class="list-group-item"><span class="t">Adjacent boundaries</span><span class="m">don't double up</span></div>
+    <div class="list-group-item"><span class="t">Shared divider</span><span class="m">band straddles the border</span></div>
+    <div class="list-group-item"><span class="t">Fourth row</span><span class="m">…</span></div>
+  </div>
+
+  <form>
+    <input placeholder="Input: ring + inline spot (focus defers to native ring)">
+    <select><option>Select — same treatment</option><option>…</option></select>
+  </form>
+
+  <footer>Open the modal and move the pointer: only the modal is lit (domain isolation) — the page below stays dark, no light bleeding through the overlay. <a href="https://github.com/sakura-lolipop/web-immersive-light">GitHub</a> · verified against <a href="https://github.com/sakura-lolipop/HotifyNEXT-Server">HotifyNEXT-Server /console</a></footer>
 </div>
-<div id="light-layer"></div>
-<div class="hud" id="hud">fps—(空格切主题)</div>
+
+<!-- 光域 demo:.modal.in = 井;开/关必调 window.__lightRepaint()(域切换重画+触屏栈失效) -->
+<div class="modal" id="demo-modal">
+  <div class="modal-backdrop" id="demo-backdrop"></div>
+  <div class="modal-dialog"><div class="modal-content">
+    <h3>Light domain</h3>
+    <p>While this modal is open, light reaches only this card. The page below stays dark even with the pointer inside the modal — no bleed-through, and any overlay above the page canvas physically occludes light.</p>
+    <button class="btn" id="btn-close">Close</button>
+  </div></div>
+</div>
+
 <script src="light.js"></script>
 <script>
-// demo 接线(非样板本体)
-document.addEventListener('keydown',function(e){
-  if(e.code==='Space'){e.preventDefault();document.body.classList.toggle('light');}
+document.addEventListener('keydown', function(e){
+  if (e.code !== 'Space') return;
+  e.preventDefault();
+  var html = document.documentElement, cur = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  html.setAttribute('data-theme', cur);
+  window.__lightRepaint && window.__lightRepaint();
 });
-(function fps(){
-  var a=[],l=performance.now();
-  (function f(n){a.push(n-l);l=n;if(a.length>60)a.shift();
-    document.getElementById('hud').textContent='fps≈'+Math.round(60000/a.reduce(function(p,c){return p+c},0))+'(空格切主题)';requestAnimationFrame(f);})(performance.now());
-})();
+document.getElementById('btn-theme').onclick = function(){ document.dispatchEvent(new KeyboardEvent('keydown', {code:'Space'})); };
+function openModal(){
+  document.getElementById('demo-modal').classList.add('in');
+  document.getElementById('demo-backdrop').classList.add('show');
+  window.__lightRepaint && window.__lightRepaint();
+}
+function closeModal(){
+  document.getElementById('demo-modal').classList.remove('in');
+  document.getElementById('demo-backdrop').classList.remove('show');
+  window.__lightRepaint && window.__lightRepaint();
+}
+document.getElementById('btn-modal').onclick = openModal;
+document.getElementById('btn-close').onclick = closeModal;
+document.getElementById('demo-backdrop').onclick = closeModal;
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeModal(); });
 </script>
 </body>
 </html>
