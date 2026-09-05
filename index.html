@@ -7,7 +7,8 @@
   模型(不变):指针=光源,光=连续物理场。k = clamp(1 - d/2R),元素内 k=1。
   渲染:全屏单 #light-canvas 四通道(blob sprite/面斑 clip/边缘带段化/input 环+斑)。
   光域唯一性:模态弹卡=井——井内只照井内;页面域 canvas z1049 被一切更高浮层天然挡光。
-  demo:Space 切深浅主题;「Open modal」演示光域;?light=boost 自证 / ?light=bench 帧率 HUD。
+  浮层互挡(2026-09-06 源仓第九刀语义通用化):.light-over=遮挡者——被盖面墨挖洞+指针在遮挡者上=整卡入影。
+  demo:Space 切深浅主题;「Open modal」演示光域;双叠卡演示互挡;?light=boost 自证 / ?light=bench 帧率 HUD。
 ============================================================ -->
 <html lang="en">
 <head>
@@ -46,6 +47,13 @@ kbd{background:#21262d;border-radius:4px;padding:0 .4em;font-size:.85em}
   cursor:pointer;font:inherit;position:relative;z-index:1}
 html[data-theme=light] .btn{border-color:#d0d7de;background:#fff;color:#24292f}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem}
+h2{font-size:1.15rem;margin:2.5rem 0 .5rem}
+.stack{position:relative;margin:1.25rem 0}
+.stack .card{max-width:320px}
+.st-a{position:relative;margin:-5.5rem 0 0 12rem;background:#1f2530;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+html[data-theme=light] .st-a{background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.15)}
+.st-a code,footer code{background:#21262d;border-radius:4px;padding:.1em .35em;font-size:.85em}
+html[data-theme=light] .st-a code{background:#eaeef2}
 .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:1rem;position:relative;z-index:1}
 html[data-theme=light] .card{background:#fff;border-color:#d0d7de}
 .card h3{margin:0 0 .4rem;font-size:1rem}
@@ -94,6 +102,13 @@ html[data-theme=light] .modal-content{background:#fff;border-color:#d0d7de}
     <div class="card"><h3>Edge band</h3><p>The perceptually dominant channel — edges reveal only near the light.</p></div>
     <div class="card"><h3>On-surface boost</h3><p>Pointer inside a card adds the Δ compensation to the blob.</p></div>
     <div class="card"><h3>Continuous field</h3><p>Light is not sliced by element boundaries: k = 1 − d/2R over the whole page.</p></div>
+  </div>
+
+  <h2>Occlusion — covered surfaces stay dark</h2>
+  <p class="lead">Two overlapping cards. Hover the <strong>top</strong> card: the covered card stays completely dark — no light bleeding through the overlap. Hover the exposed sliver or the page around: it lights by proximity like any other card.</p>
+  <div class="stack">
+    <div class="card st-b"><h3>Covered card</h3><p>Receives light only from line-of-sight positions — the top card casts a shadow over it, including its exposed sliver.</p></div>
+    <div class="card st-a light-over"><h3>Top card <small>(.light-over)</small></h3><p>Add <code>light-over</code> to any floating surface that covers others.</p></div>
   </div>
 
   <div class="list-group">

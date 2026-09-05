@@ -25,6 +25,7 @@ k = clamp(1 − dist(light, element-rect-nearest-point) / 2R)
 Plus:
 
 - **Light domain (the headline rule)**: a modal is a *well* — while open, light reaches only the modal; the page below stays dark. And the page canvas sits at z1049, **below any overlay you add** (panels, toasts, future containers) — they physically occlude light with zero registration. Modal open → canvas z2000 floats light on the modal surface.
+- **Occlusion between overlapping surfaces** (2026-09-06, ported from the source repo's 9th revision): give any floating surface the `light-over` class and it casts a shadow — a covered element's ink is clipped out of the overlap, and while the pointer rests on the covering element the covered one stays fully dark (exposed sliver included). Purely adjacent surfaces keep normal proximity lighting. Same-stacking-context DOM order decides who covers whom; cross-context stacking needs the source repo's dual-canvas build.
 - **Row mode**: top-edge-only band for table/list rows — adjacent boundaries don't double up
 - **Touch**: dedicated touch channel (gesture capture kills `pointermove`), finger-stack caching at 40px threshold
 - **Scroll-follow**: compositor-phase repaint loop while scrolling (event-driven paint lags one frame on mobile = trailing ghost)

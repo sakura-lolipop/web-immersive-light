@@ -19,7 +19,7 @@ Real-world integration demo — full-stack live run against [memos](https://gith
 - `light.js` — the adapted copy (SEL changed, rest identical to root `light.js`)
 - `patches/memos-integration.patch` — full `git diff` from clean clone to working demo
 - `shots/` — screenshots (dark/light × card/sidebar/dialog)
-- `scripts/` — Playwright probe scripts (assertions + pixel-diff + screenshot)
+- ~~`scripts/`~~ probe scripts removed (they hardcoded local paths; pixel probes described in the source repo `webuipath.md` W15/W16)
 
 ## How to reproduce
 

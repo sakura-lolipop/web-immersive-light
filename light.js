@@ -37,6 +37,11 @@ var SEL = '.card, .modal-content, .nav-link, .list-group-item, td, .input-icon';
 var SEL_ROW = '.list-group-item, td';
 var INPUTS = 'input, select, textarea';
 var SEL_ALL = SEL + ',' + INPUTS; // 受光面全集单一真相(全扫与触屏手指栈同源——两处各拼一份=PC/触屏集合静默分叉)
+// 遮挡注册表(2026-09-06 移植源仓第九刀「面板互挡」语义,通用化):挂 .light-over 的元素对与之
+// 交叠、DOM 序更早的受光面「投影」——指针停遮挡者上=被盖面整体入影(露条也灭);指针在别处=
+// 被盖面的墨挖掉交叠区(墨不浮上遮挡者的脸)。序判据=同层叠上下文的 DOM 序(后写者上);跨
+// 上下文/z-index 复杂叠放请用源仓双画布版(遮挡由合成器物理答)。
+var SEL_OVER = '.light-over';
 var px = -1, py = -1, pending = null, pendCand = null, lit = [];
 
 function vars(){
@@ -123,6 +128,15 @@ function roundRect(x, y, w, h, rad){
   ctx.arcTo(x, y, x + w, y, rad);
   ctx.closePath();
 }
+// clipFace 元素圆角矩形裁剪(+可选遮挡洞,evenodd)。css=true 用 CSS px(调用方已 ctx.scale(SC))
+function clipFace(b, rad, css, holes){
+  var m = css ? 1 : SC;
+  if (!holes || !holes.length) { roundRect(b.left * m, b.top * m, b.width * m, b.height * m, rad * m); ctx.clip(); return; }
+  var p = new Path2D();
+  p.roundRect(b.left * m, b.top * m, b.width * m, b.height * m, rad * m);
+  holes.forEach(function(h){ p.rect(h.left * m, h.top * m, (h.right - h.left) * m, (h.bottom - h.top) * m); });
+  ctx.clip(p, 'evenodd');
+}
 
 // ── 边缘带周长段绘制(段级 α+段内微渐变+阈值,治阶梯与圆角断)──
 var SEG = 4, SEG_MIN_A = .06;
@@ -202,6 +216,11 @@ function applyScope(scope){
 function collect(candidates, v, scope){
   var list = candidates || document.querySelectorAll(SEL_ALL);
   var reads = [];
+  var overs = []; // 遮挡者批读(与候选同一读阶段——批量读后统一写红线)
+  document.querySelectorAll(SEL_OVER).forEach(function(el){
+    var b = el.getBoundingClientRect();
+    if (b.width >= 4 && b.height >= 4) overs.push({el: el, b: b});
+  });
   list.forEach ? list.forEach(function(el){
     // 光域谓词:井内=只收井面+后代;页面域=排除一切 .modal 后代(隐藏 modal 零 rect 本就出局,closest 兜底)
     if (scope) { if (!(el === scope || scope.contains(el))) return; }
@@ -209,7 +228,25 @@ function collect(candidates, v, scope){
     var b = el.getBoundingClientRect();
     if (b.width < 4 || b.height < 4) return; // 面积阈值(防御纵深:display:none 零 rect 幽灵等亚视觉面)
     if (b.bottom < -v.r || b.top > window.innerHeight + v.r || b.right < -v.r || b.left > window.innerWidth + v.r) return; // 视口外不画
-    reads.push({el: el, b: b});
+    // 遮挡谓词(2026-09-06 源仓第九刀语义通用化):遮挡者与本元素交叠且 DOM 序在其后(同层叠上下文
+    // =后写者上)→洞随行(绘制侧挖掉交叠区);指针停任一洞内=本元素整体入影(露条同灭——被盖的卡
+    // 不受光,纯邻接不叠的表面照常邻距受光)。
+    var holes = null;
+    for (var oi = 0; oi < overs.length; oi++) {
+      var ov = overs[oi];
+      if (ov.el === el || ov.el.contains(el) || el.contains(ov.el)) continue;
+      if (!(el.compareDocumentPosition(ov.el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      var ob = ov.b;
+      if (ob.left < b.right && ob.right > b.left && ob.top < b.bottom && ob.bottom > b.top) {
+        holes = holes || [];
+        holes.push(ob);
+      }
+    }
+    if (holes) for (var hi = 0; hi < holes.length; hi++) {
+      var h2 = holes[hi];
+      if (px >= h2.left && px <= h2.right && py >= h2.top && py <= h2.bottom) return; // 被盖入影
+    }
+    reads.push({el: el, b: b, holes: holes});
   }) : null;
   var infl = v.r * 2, faces = [], inputs = [], next = [], onSurface = false;
   reads.forEach(function(o){
@@ -222,11 +259,11 @@ function collect(candidates, v, scope){
     if (k >= 1 && (o.el.matches('.card') || o.el.matches('.modal-content'))) onSurface = true;
     if (o.el.matches(INPUTS)) {
       if (document.activeElement === o.el) return; // focus 让位原生 focus ring
-      inputs.push({el: o.el, b: b, k: k, mx: mx, my: my});
+      inputs.push({el: o.el, b: b, k: k, mx: mx, my: my, holes: o.holes});
     } else {
       o.el.classList.add('lit');
       if (o.el.matches(SEL_ROW)) o.el.classList.add('lit-row');
-      faces.push({el: o.el, b: b, k: k, mx: mx, my: my, row: o.el.matches(SEL_ROW)});
+      faces.push({el: o.el, b: b, k: k, mx: mx, my: my, row: o.el.matches(SEL_ROW), holes: o.holes}); // holes 随行(曾在此重建对象时丢字段=洞 clip 哑火,与源仓第八刀同型病)
       next.push(o.el);
     }
   });
@@ -244,17 +281,17 @@ function paint(candidates){
   var blobA = (v.aBase + (onSurface ? (isNaN(v.ds) ? 0 : v.ds) : 0)) * v.gain;
   if (window.__lightBoost) blobA = .45;
   if (v.blob) ctx.drawImage(blobSprite(v, blobA), (px - v.r) * SC, (py - v.r) * SC, v.r * 2 * SC, v.r * 2 * SC);
-  // ② 面斑+③ 边缘带
+  // ② 面斑+③ 边缘带(被盖元素带 holes:面斑/边带双坐标系同裁——墨不浮上遮挡者的脸)
   faces.forEach(function(o){
     var b = o.b, rad = radiusOf(o.el);
     ctx.save();
-    roundRect(b.left * SC, b.top * SC, b.width * SC, b.height * SC, rad * SC);
-    ctx.clip();
+    clipFace(b, rad, false, o.holes);
     ctx.fillStyle = radial(v, (b.left + o.mx) * SC, (b.top + o.my) * SC, v.r * SC, v.aBase * v.gain * o.k);
     ctx.fillRect(b.left * SC, b.top * SC, b.width * SC, b.height * SC);
     ctx.restore();
     ctx.save();
     ctx.scale(SC, SC);
+    clipFace(b, rad, true, o.holes); // 边带同裁(CSS px)
     drawEdgeBand(v, o, b.left + o.mx, b.top + o.my);
     ctx.restore();
   });
@@ -262,13 +299,13 @@ function paint(candidates){
   inputs.forEach(function(o){
     var b = o.b, rad = radiusOf(o.el);
     ctx.save();
-    roundRect(b.left * SC, b.top * SC, b.width * SC, b.height * SC, rad * SC);
-    ctx.clip();
+    clipFace(b, rad, false, o.holes);
     ctx.fillStyle = radial(v, (b.left + o.mx) * SC, (b.top + o.my) * SC, v.r * SC, (v.edgeA + .08 * v.gain) * o.k);
     ctx.fillRect(b.left * SC, b.top * SC, b.width * SC, b.height * SC);
     ctx.restore();
     ctx.save();
     ctx.scale(SC, SC);
+    clipFace(b, rad, true, o.holes);
     drawEdgeBand(v, o, b.left + o.mx, b.top + o.my);
     ctx.restore();
   });
